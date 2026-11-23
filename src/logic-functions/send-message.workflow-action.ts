@@ -1,42 +1,55 @@
 import { defineLogicFunction } from 'twenty-sdk/define';
 
 import { TRUEBEEP_SEND_MESSAGE_WORKFLOW_ACTION_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
+import { getPeople, type TwentyPerson } from 'src/lib/people';
+import { sendToPerson } from 'src/lib/send';
 import { getTrueBeep } from 'src/lib/truebeep-client';
+import type { TrueBeepChannel } from 'src/lib/truebeep-types';
 
-type SendMessageInput = {
+type Input = {
+  personId?: string;
   personEmail?: string;
   personPhone?: string;
-  channel: 'sms' | 'email' | 'whatsapp';
-  message: string;
+  channel: TrueBeepChannel;
+  templateId?: string;
   subject?: string;
+  message?: string;
 };
 
-// Phase 0: proves the step appears in Twenty Workflows and reaches TrueBeep with the
-// workspace's key. The real send goes through POST /v1/messages (plan T1), which
-// enforces opt-in on TrueBeep's side; until it exists this step fails clearly.
-const handler = async (input: SendMessageInput) => {
-  if (!input.personEmail && !input.personPhone) {
-    throw new Error('Give the person email or phone.');
+// A Twenty workflow step. Consent is enforced by TrueBeep: an opted-out or
+// not-opted-in person makes the step fail with TrueBeep's reason, so the run
+// history shows why nothing was sent.
+const handler = async (input: Input, context: { workflowRunId?: string } & Record<string, unknown>) => {
+  if (!['email', 'sms', 'whatsapp'].includes(input.channel)) throw new Error('Channel must be email, sms or whatsapp.');
+  if (!input.templateId && !input.message?.trim()) throw new Error('Give a message or a TrueBeep template id.');
+
+  let person: TwentyPerson | undefined;
+  if (input.personId) [person] = await getPeople([input.personId]);
+  if (!person) {
+    if (!input.personEmail && !input.personPhone) throw new Error('Give the person (record id), or an email or phone.');
+    person = {
+      id: input.personId ?? 'workflow',
+      emails: { primaryEmail: input.personEmail ?? null },
+      phones: { primaryPhoneNumber: input.personPhone ?? null, primaryPhoneCallingCode: null },
+    };
   }
-  if (!input.message?.trim()) {
-    throw new Error('Message is empty.');
-  }
+
   const trueBeep = await getTrueBeep();
-  const result = await trueBeep.request<{ data: { id: string; status: string } }>('POST', '/v1/messages', {
-    to: { email: input.personEmail, phone: input.personPhone },
-    channel: input.channel,
-    body: input.message,
-    subject: input.subject,
-    source: { app: 'twenty', via: 'workflow' },
-  });
-  return { messageId: result.data.id, status: result.data.status };
+  const sent = await sendToPerson(
+    trueBeep,
+    person,
+    { channel: input.channel, templateId: input.templateId, subject: input.subject, body: input.message },
+    { via: 'workflow' },
+    typeof context?.workflowRunId === 'string' ? `twenty-wf-${context.workflowRunId}-${person.id}` : undefined,
+  );
+  return { messageId: sent.id, status: sent.status, to: sent.to, truebeepCustomerId: sent.customerId, addedToTrueBeep: sent.createdCustomer };
 };
 
 export default defineLogicFunction({
   universalIdentifier: TRUEBEEP_SEND_MESSAGE_WORKFLOW_ACTION_UNIVERSAL_IDENTIFIER,
   name: 'truebeep-send-message',
   description: 'Send an SMS, email or WhatsApp message through TrueBeep',
-  timeoutSeconds: 20,
+  timeoutSeconds: 30,
   workflowActionTriggerSettings: {
     label: 'TrueBeep: Send message',
     icon: 'IconMessage',
@@ -44,10 +57,12 @@ export default defineLogicFunction({
       {
         type: 'object',
         properties: {
-          personEmail: { type: 'string', label: 'Person email' },
-          personPhone: { type: 'string', label: 'Person phone (with country code)' },
-          channel: { type: 'string', enum: ['sms', 'email', 'whatsapp'], label: 'Channel' },
-          subject: { type: 'string', label: 'Subject (email only)' },
+          personId: { type: 'string', label: 'Person (record id)' },
+          personEmail: { type: 'string', label: 'Or: email' },
+          personPhone: { type: 'string', label: 'Or: phone with country code' },
+          channel: { type: 'string', enum: ['email', 'sms', 'whatsapp'], label: 'Channel' },
+          templateId: { type: 'string', label: 'TrueBeep template id (optional)' },
+          subject: { type: 'string', label: 'Subject (email without a template)' },
           message: { type: 'string', label: 'Message', multiline: true },
         },
       },
@@ -58,6 +73,9 @@ export default defineLogicFunction({
         properties: {
           messageId: { type: 'string' },
           status: { type: 'string' },
+          to: { type: 'string' },
+          truebeepCustomerId: { type: 'string' },
+          addedToTrueBeep: { type: 'boolean' },
         },
       },
     ],
