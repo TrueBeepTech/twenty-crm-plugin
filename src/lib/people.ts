@@ -41,6 +41,77 @@ export const getPeople = async (ids: string[]): Promise<TwentyPerson[]> => {
   return people;
 };
 
+export const MAX_BULK_PEOPLE = 1000;
+const BATCH = 50;
+
+/** Many people in a few requests (bulk campaign path). */
+export const getPeopleBulk = async (ids: string[]): Promise<TwentyPerson[]> => {
+  const unique = [...new Set(ids.filter(Boolean))].slice(0, MAX_BULK_PEOPLE);
+  const twenty = new RestApiClient();
+  const people: TwentyPerson[] = [];
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH);
+    const { data } = await twenty.get<{ data: { people: TwentyPerson[] } }>('/rest/people', {
+      query: { filter: `id[in]:[${chunk.map((id) => `"${id}"`).join(',')}]`, limit: BATCH },
+    });
+    people.push(...(data?.people ?? []));
+  }
+  return people;
+};
+
+type Connection<T> = { edges: Array<{ node: T }>; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+
+/** Pages a GraphQL connection (people or opportunities) under a record filter, up to MAX_BULK_PEOPLE. */
+const pageByFilter = async <T>(field: 'people' | 'opportunities', filterType: string, selection: string, filter: unknown): Promise<T[]> => {
+  const twenty = new RestApiClient();
+  const out: T[] = [];
+  let after: string | null = null;
+  const query = `query($filter: ${filterType}, $after: String) { ${field}(filter: $filter, first: 200, after: $after) { edges { node { ${selection} } } pageInfo { hasNextPage endCursor } } }`;
+  for (;;) {
+    const res: { data?: Record<string, Connection<T>>; errors?: Array<{ message: string }> } = await twenty.post('/graphql', {
+      query,
+      variables: { filter: filter ?? {}, after },
+    });
+    if (res.errors?.length) throw new Error(res.errors[0].message);
+    const conn = res.data?.[field];
+    out.push(...(conn?.edges ?? []).map((e) => e.node));
+    if (!conn?.pageInfo.hasNextPage || out.length >= MAX_BULK_PEOPLE) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return out.slice(0, MAX_BULK_PEOPLE);
+};
+
+/** People under the list's "select all" filter (Twenty passes a filter, not ids). */
+export const getPeopleByFilter = (filter: unknown) =>
+  pageByFilter<TwentyPerson>(
+    'people',
+    'PersonFilterInput',
+    'id name { firstName lastName } emails { primaryEmail } phones { primaryPhoneNumber primaryPhoneCallingCode }',
+    filter,
+  );
+
+/** Points of contact of the deals under a "select all" filter. */
+export const getPointsOfContactByFilter = async (filter: unknown) => {
+  const deals = await pageByFilter<{ pointOfContactId: string | null }>('opportunities', 'OpportunityFilterInput', 'pointOfContactId', filter);
+  const personIds = [...new Set(deals.map((d) => d.pointOfContactId).filter((v): v is string => !!v))];
+  return { personIds, skipped: deals.filter((d) => !d.pointOfContactId).length };
+};
+
+/** Many deals → their points of contact, in a few requests. */
+export const getPointsOfContactBulk = async (opportunityIds: string[]): Promise<{ personIds: string[]; skipped: number }> => {
+  const unique = [...new Set(opportunityIds.filter(Boolean))].slice(0, MAX_BULK_PEOPLE);
+  const twenty = new RestApiClient();
+  const personIds: string[] = [];
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH);
+    const { data } = await twenty.get<{ data: { opportunities: Array<{ pointOfContactId?: string | null }> } }>('/rest/opportunities', {
+      query: { filter: `id[in]:[${chunk.map((id) => `"${id}"`).join(',')}]`, limit: BATCH },
+    });
+    for (const o of data?.opportunities ?? []) if (o.pointOfContactId) personIds.push(o.pointOfContactId);
+  }
+  return { personIds: [...new Set(personIds)], skipped: unique.length - personIds.length };
+};
+
 /** Opportunity ids → their point-of-contact person ids (deals without a contact are skipped). */
 export const getPointsOfContact = async (opportunityIds: string[]): Promise<{ personIds: string[]; skipped: number }> => {
   const twenty = new RestApiClient();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { defineFrontComponent } from 'twenty-sdk/define';
-import { closeSidePanel, enqueueSnackbar, useSelectedObjectMetadata, useSelectedRecordIds } from 'twenty-sdk/front-component';
+import { closeSidePanel, enqueueSnackbar, useSelectedObjectMetadata, useSelectedRecordIds, useSelectedRecordsFilter } from 'twenty-sdk/front-component';
 import { LightButton, MainButton, SegmentedControl } from 'twenty-ui/components/input';
 import { Banner, Loader } from 'twenty-ui/primitives/feedback';
 import { Input, Textarea } from 'twenty-ui/primitives/input';
@@ -9,6 +9,7 @@ import { useTheme } from 'twenty-ui/theme';
 
 import { TRUEBEEP_SEND_COMPOSER_FRONT_COMPONENT_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
 import { getRoute, isFailure, newRequestId, postRoute } from 'src/front-components/shared/call-route';
+import { CampaignComposerView, MAX_CAMPAIGN_SELECTION } from 'src/front-components/shared/campaign-composer-view';
 import {
   CHANNEL_LABELS,
   type RecipientPreview,
@@ -23,6 +24,8 @@ const SMS_SEGMENT = 160;
 const SendComposer = () => {
   const theme = useTheme();
   const selectedIds = useSelectedRecordIds();
+  // "Select all" in a list gives a filter instead of ids.
+  const selectAllFilter = useSelectedRecordsFilter();
   const objectName = useSelectedObjectMetadata()?.nameSingular;
   const isDeal = objectName === 'opportunity';
   const ids = useMemo(() => selectedIds.slice(0, MAX), [selectedIds]);
@@ -99,6 +102,9 @@ const SendComposer = () => {
     </Text>
   );
 
+  if (ids.length === 0 && selectAllFilter) {
+    return <CampaignComposerView ids={[]} filter={selectAllFilter} isDeal={isDeal} totalSelected={null} />;
+  }
   if (ids.length === 0) {
     return (
       <div style={column} data-testid="truebeep-send-composer">
@@ -108,11 +114,11 @@ const SendComposer = () => {
   }
   if (tooMany) {
     return (
-      <div style={column} data-testid="truebeep-send-composer">
-        <Banner status="warning" variant="soft">
-          Select up to {MAX} at a time. For larger groups, send a campaign in TrueBeep.
-        </Banner>
-      </div>
+      <CampaignComposerView
+        ids={selectedIds.slice(0, MAX_CAMPAIGN_SELECTION)}
+        isDeal={isDeal}
+        totalSelected={selectedIds.length}
+      />
     );
   }
 
