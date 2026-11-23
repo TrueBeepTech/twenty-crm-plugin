@@ -2,7 +2,7 @@
 
 All notable changes to this application are documented in this file.
 
-## Unreleased
+## 0.2.0 (pilot)
 
 - **Connect TrueBeep with sign-in** (OAuth discovery): Twenty registers with TrueBeep, the user picks the team and approves scopes; preferred over an API key when both exist.
 - **Campaign mode**: more than 25 selected, or *select all*, is sent as a TrueBeep campaign (template, audience and cost preview, confirm).
