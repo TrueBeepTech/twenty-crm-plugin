@@ -1,6 +1,6 @@
 import { listConnections, reportConnectionAuthFailure } from 'twenty-sdk/logic-function';
 
-import { TRUEBEEP_API_KEY_CONNECTION_NAME } from 'src/constants/universal-identifiers';
+import { TRUEBEEP_API_KEY_CONNECTION_NAME, TRUEBEEP_OAUTH_CONNECTION_NAME } from 'src/constants/universal-identifiers';
 
 // Server-side only (logic functions). Front components call the app's /s/* routes instead,
 // so the TrueBeep credential never reaches the browser.
@@ -8,7 +8,7 @@ import { TRUEBEEP_API_KEY_CONNECTION_NAME } from 'src/constants/universal-identi
 export class TrueBeepNotConnectedError extends Error {
   readonly code = 'TRUEBEEP_NOT_CONNECTED';
   constructor() {
-    super('TrueBeep is not connected. Add a TrueBeep API key under Settings → Applications → TrueBeep.');
+    super('TrueBeep is not connected. Connect it under Settings → Apps → TrueBeep (sign in with TrueBeep, or add an API key).');
   }
 }
 
@@ -29,9 +29,18 @@ export type TrueBeepClient = {
 
 const getApiBase = () => (process.env.TRUEBEEP_API_BASE ?? 'https://api.truebeep.com').replace(/\/+$/, '');
 
+/** Picks the OAuth connection ("Connect TrueBeep") when there is a healthy one, else the API key. */
+const pickConnection = async () => {
+  const [oauth, apiKey] = await Promise.all([
+    listConnections({ providerName: TRUEBEEP_OAUTH_CONNECTION_NAME, scope: 'WORKSPACE' }),
+    listConnections({ providerName: TRUEBEEP_API_KEY_CONNECTION_NAME, scope: 'WORKSPACE' }),
+  ]);
+  const healthy = (list: typeof oauth) => list.find((c) => !c.authFailedAt && c.accessToken);
+  return healthy(oauth) ?? healthy(apiKey) ?? oauth[0] ?? apiKey[0];
+};
+
 export const getTrueBeep = async (): Promise<TrueBeepClient> => {
-  const connections = await listConnections({ providerName: TRUEBEEP_API_KEY_CONNECTION_NAME, scope: 'WORKSPACE' });
-  const connection = connections.find((c) => !c.authFailedAt) ?? connections[0];
+  const connection = await pickConnection();
   if (!connection?.accessToken) {
     throw new TrueBeepNotConnectedError();
   }
@@ -48,8 +57,9 @@ export const getTrueBeep = async (): Promise<TrueBeepClient> => {
     });
 
     if (response.status === 401) {
-      await reportConnectionAuthFailure({ connectionId: connection.id, reason: 'TrueBeep rejected the API key' });
-      throw new TrueBeepApiError(401, 'TRUEBEEP_AUTH_FAILED', 'TrueBeep rejected the API key. Reconnect TrueBeep.');
+      const what = connection.providerType === 'api-key' ? 'the API key' : 'the sign-in';
+      await reportConnectionAuthFailure({ connectionId: connection.id, reason: `TrueBeep rejected ${what}` });
+      throw new TrueBeepApiError(401, 'TRUEBEEP_AUTH_FAILED', `TrueBeep rejected ${what}. Reconnect TrueBeep.`);
     }
 
     const text = await response.text();

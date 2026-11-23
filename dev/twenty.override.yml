@@ -8,12 +8,17 @@
 # Twenty ships with app logic functions disabled; LOCAL runs them inside the server.
 # SERVER_INTERNAL_URL: functions call Twenty back on the in-container port, not the
 # host-mapped SERVER_URL (localhost:3022 does not exist inside the container).
+# OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS: private hosts Twenty may call, e.g. the
+# local TrueBeep for OAuth discovery. Set TWENTY_ALLOWED_INTERNAL_HOSTS to add yours
+# (comma separated), e.g. host.docker.internal,172.25.96.1
 services:
   server:
     environment:
       LOGIC_FUNCTION_TYPE: LOCAL
       SERVER_INTERNAL_URL: http://localhost:3000
+      OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS: ${TWENTY_ALLOWED_INTERNAL_HOSTS:-host.docker.internal}
   worker:
     environment:
       LOGIC_FUNCTION_TYPE: LOCAL
       SERVER_INTERNAL_URL: http://server:3000
+      OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS: ${TWENTY_ALLOWED_INTERNAL_HOSTS:-host.docker.internal}
