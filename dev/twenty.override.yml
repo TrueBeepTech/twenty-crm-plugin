@@ -1,0 +1,19 @@
+# Extra settings for the local Twenty used to develop this app. Use it on top of
+# truebeep's scripts/dev/twenty/docker-compose.yml:
+#
+#   cd <truebeep>/scripts/dev/twenty
+#   TAG=v2.61.0 TWENTY_PORT=3022 docker compose -p twenty-app \
+#     -f docker-compose.yml -f <this repo>/dev/twenty.override.yml up -d
+#
+# Twenty ships with app logic functions disabled; LOCAL runs them inside the server.
+# SERVER_INTERNAL_URL: functions call Twenty back on the in-container port, not the
+# host-mapped SERVER_URL (localhost:3022 does not exist inside the container).
+services:
+  server:
+    environment:
+      LOGIC_FUNCTION_TYPE: LOCAL
+      SERVER_INTERNAL_URL: http://localhost:3000
+  worker:
+    environment:
+      LOGIC_FUNCTION_TYPE: LOCAL
+      SERVER_INTERNAL_URL: http://server:3000
